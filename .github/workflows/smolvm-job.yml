@@ -1,0 +1,44 @@
+name: smolvm-job
+on:
+  workflow_dispatch:
+    inputs:
+      script_b64:
+        description: base64 of the shell script to run inside the VM
+        required: true
+      image:
+        description: OCI image for the VM
+        default: alpine
+      net:
+        description: allow outbound network (true/false)
+        default: "false"
+      job_id:
+        description: caller job id
+        default: manual
+jobs:
+  job:
+    name: job-${{ inputs.job_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      JOB_B64: ${{ inputs.script_b64 }}
+      JOB_IMAGE: ${{ inputs.image }}
+      JOB_NET: ${{ inputs.net }}
+    steps:
+      - name: Run job in a disposable smolvm microVM
+        run: |
+          sudo chmod 666 /dev/kvm
+          B=https://github.com/smol-machines/smolvm/releases/download/v1.28.0
+          curl -sLO $B/smolvm-1.28.0-linux-x86_64.tar.gz; curl -sLO $B/checksums.sha256
+          grep linux-x86_64 checksums.sha256 | sha256sum -c - && tar xzf smolvm-1.28.0-linux-x86_64.tar.gz
+          export PATH="$PWD/smolvm-1.28.0-linux-x86_64:$PATH"
+          NETFLAG=""; [ "$JOB_NET" = "true" ] && NETFLAG="--net"
+          echo "JOB_SCRIPT_SHA256=$(echo "$JOB_B64" | base64 -d | sha256sum | cut -d' ' -f1)"
+          smolvm machine create -n job -I "$JOB_IMAGE" $NETFLAG --cpus 2 --mem 1024
+          smolvm machine start -n job
+          echo "=====JOB_START"
+          smolvm machine exec --name job --timeout 600s -- sh -c "echo $JOB_B64 | base64 -d > /tmp/job.sh; sh /tmp/job.sh"
+          RC=$?
+          echo "=====JOB_END exit=$RC"
+          smolvm machine delete -n job -f
+          echo "JOB_VM_DELETED=1"
+          exit $RC
