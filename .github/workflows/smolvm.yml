@@ -1,0 +1,47 @@
+name: smolvm-kvm-test
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: KVM check
+        run: |
+          ls -l /dev/kvm || echo "NO /dev/kvm"
+          grep -E -c '(vmx|svm)' /proc/cpuinfo || true
+          sudo chmod 666 /dev/kvm || true
+          nproc; free -m
+      - name: Install smolvm 1.28.0 (checksum verified)
+        run: |
+          B=https://github.com/smol-machines/smolvm/releases/download/v1.28.0
+          curl -sLO $B/smolvm-1.28.0-linux-x86_64.tar.gz; curl -sLO $B/checksums.sha256
+          grep linux-x86_64 checksums.sha256 | sha256sum -c -
+          tar xzf smolvm-1.28.0-linux-x86_64.tar.gz; echo "$PWD/smolvm-1.28.0-linux-x86_64" >> $GITHUB_PATH
+      - name: Boot alpine
+        run: |
+          set -x
+          smolvm --version
+          smolvm machine create -n t1 -I alpine --net --cpus 1 --mem 512 -p 18080:8080
+          smolvm machine start -n t1
+          smolvm machine exec -n t1 -- sh -c 'uname -a; cat /etc/alpine-release; nproc; free -m | head -2'
+      - name: Resize running machine
+        run: |
+          set -x
+          smolvm machine resize -n t1 --cpus 2
+          smolvm machine resize -n t1 --mem 1024
+          smolvm machine exec -n t1 -- sh -c 'nproc; free -m | head -2'
+      - name: Port published at create reaches guest
+        run: |
+          set -x
+          smolvm machine exec -n t1 -- sh -c 'mkdir -p /w && echo smolvm-ok > /w/index.html && (httpd -f -p 8080 -h /w >/dev/null 2>&1 &) ; sleep 1'
+          sleep 2; curl -s -m 10 http://127.0.0.1:18080/index.html
+      - name: Live port change (no restart)
+        continue-on-error: true
+        run: |
+          set -x
+          smolvm machine update --help | sed -n 1,60p
+          smolvm machine update -n t1 -p 18081:8080 || true
+          sleep 2; curl -s -m 10 http://127.0.0.1:18081/index.html; smolvm machine status -n t1
+      - name: Cleanup
+        if: always()
+        run: smolvm machine delete -n t1 -f || true
