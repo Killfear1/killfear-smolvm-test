@@ -1,0 +1,8 @@
+name: smolvm-run
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - run: curl -sL https://raw.githubusercontent.com/Killfear1/killfear-smolvm-test/main/run.sh -o run.sh && bash run.sh
